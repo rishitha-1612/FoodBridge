@@ -1,0 +1,6 @@
+{
+  "name": "FoodBridge",
+  "description": "Surplus food redistribution platform connecting Restaurants, NGOs, and Volunteers to fight hunger and food waste.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
