@@ -738,10 +738,10 @@ async function startServer() {
 
   // GET /api/admin/users
   app.get("/api/admin/users", authenticateToken, (req: AuthRequest, res: Response) => {
-    if (req.user?.role !== 'admin') {
-      res.status(403).json({ error: "Admin access required" });
-      return;
-    }
+    if (req.user?.role !== 'admin' && req.user?.role !== 'ngo') {
+    res.status(403).json({ error: "Access denied" });
+    return;
+}
 
     const users = querySql("SELECT id, name, email, role, status, organization_name as organizationName, phone, address, availability_zone as availabilityZone, created_at as createdAt FROM users ORDER BY created_at DESC");
     res.json(users);
