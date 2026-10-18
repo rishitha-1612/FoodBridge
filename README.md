@@ -135,6 +135,29 @@ Run TypeScript diagnostics and linting:
 npm run lint
 ```
 
+## Multilingual Support Chat
+
+The chat widget uses the local fine-tuned classifier in `foodbridge_model/` through a separate FastAPI service. Keep that model folder on the machine running the service; it is intentionally excluded from Git because the weights are about 711 MB.
+
+In a second terminal, from the repository root, install and start the Python service:
+
+```powershell
+py -3.10 -m venv chatbot_service/.venv
+chatbot_service/.venv/Scripts/python -m pip install -r chatbot_service/requirements.txt
+chatbot_service/.venv/Scripts/python -m uvicorn main:app --app-dir chatbot_service --host 127.0.0.1 --port 8000
+```
+
+In another terminal, install and start FoodBridge as usual:
+
+```powershell
+npm install
+npm run dev
+```
+
+The React widget calls `POST /api/chatbot` on Express. Express calls the internal Python endpoint `POST http://127.0.0.1:8000/predict`; Python health is at `GET http://127.0.0.1:8000/health`. Set `CHATBOT_SERVICE_URL` for a different internal service address. Set `FOODBRIDGE_MODEL_DIR` to override the local model folder and `CHATBOT_CONFIDENCE_THRESHOLD` to tune the fallback threshold (default `0.55`). Chat language is explicitly selected as `en`, `hi`, or `kn`; the model does not detect language. Public FAQ chat is unauthenticated. Donation history and delivery status require a valid FoodBridge JWT and are filtered by the logged-in user's role and ID.
+
+The checked-in model evaluation reports 49.2% overall accuracy, 0.098 macro F1, and 33.3% Hindi accuracy. Low confidence predictions receive a safe fallback, so responses may often be generic. The classifier does not generate prose; reviewed language templates provide the answers. Hosting should allow Python 3.10+, sufficient memory for the 711 MB weights plus the model runtime, and local network access from Express to FastAPI. Keep the FastAPI port private to the application host/network.
+
 ---
 
 # Default Administrator Account

@@ -8,6 +8,7 @@ import initSqlJs, { Database } from "sql.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "foodbridge-super-secret-jwt-key-2026";
 const PORT = 3000;
+const CHATBOT_SERVICE_URL = process.env.CHATBOT_SERVICE_URL || "http://127.0.0.1:8000";
 const DB_FILE = path.join(process.cwd(), "foodbridge.sqlite");
 
 let db: Database;
@@ -192,6 +193,122 @@ async function startServer() {
   // Health check
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", service: "FoodBridge API" });
+  });
+
+  // Public intent help, with optional JWT so account-specific status stays scoped to the signed-in user.
+  app.post("/api/chatbot", async (req: AuthRequest, res: Response) => {
+    const { message, language } = req.body || {};
+    if (typeof message !== "string" || !message.trim() || message.length > 2000) {
+      res.status(400).json({ error: "Enter a message between 1 and 2000 characters." });
+      return;
+    }
+    if (!['en', 'hi', 'kn'].includes(language)) {
+      res.status(400).json({ error: "Choose English, Hindi, or Kannada." });
+      return;
+    }
+
+    const authorization = req.headers.authorization;
+    if (authorization) {
+      const token = authorization.split(' ')[1];
+      if (!token) { res.status(401).json({ error: "Invalid authorization header." }); return; }
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET) as { id: string };
+        const user = queryOneSql("SELECT id, email, role, status, name FROM users WHERE id = ?", [decoded.id]);
+        if (!user || user.status === 'suspended') { res.status(401).json({ error: "Invalid or unavailable account." }); return; }
+        req.user = { id: user.id, email: user.email, role: user.role, name: user.name };
+      } catch {
+        res.status(401).json({ error: "Invalid or expired token." });
+        return;
+      }
+    }
+
+    try {
+      const upstream = await fetch(`${CHATBOT_SERVICE_URL.replace(/\/$/, '')}/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: message.trim(), language }),
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!upstream.ok) {
+        res.status(upstream.status === 400 ? 400 : 503).json({ error: "Chat support is temporarily unavailable." });
+        return;
+      }
+      const prediction = await upstream.json() as { intent: string; confidence: number; language: string; fallback: boolean };
+      const text: Record<string, Record<string, string>> = {
+        en: {
+          greeting: "Hello! I can help with FoodBridge, donations, account setup, and food safety. What would you like to know?",
+          goodbye: "Goodbye! Thank you for helping reduce food waste with FoodBridge.", thanks: "You’re welcome! I’m here if you need help with FoodBridge.",
+          about_foodbridge: "FoodBridge connects food donors with approved NGOs and volunteers to redistribute surplus food and track each handoff.",
+          account_login: "Use the Login page to access your account. If you can’t sign in, check your email and password, or contact FoodBridge support for account help.",
+          claim_donation: "Approved NGOs can browse available donations in the NGO Portal and accept a suitable listing. NGO accounts need administrator approval before claiming.",
+          contact_support: "For additional help, use the contact details shown in the FoodBridge app or describe the issue here and I’ll try to guide you.",
+          create_donation: "Sign in with a restaurant account and open the Restaurant Dashboard to add or manage a donation. Include its quantity, expiry, pickup address, and pickup window.",
+          donation_expiry: "Only list food that can be safely collected before its expiry. Keep it at the required temperature, package it safely, and clearly note allergens and handling instructions.",
+          donor_registration: "Choose Register and create a restaurant account. After signing in, you can list surplus food from the Restaurant Dashboard.",
+          food_safety: "Food must be wholesome and safely handled. Keep hot food above 140°F (60°C), chilled food at or below 40°F (4°C), use food-grade packaging, and label allergens.",
+          ngo_approval: "NGO registrations are reviewed by a FoodBridge administrator. You can browse listings while pending; accepting donations requires an approved account.",
+          pickup_assignment: "After an NGO accepts a donation, it can assign an available volunteer. The pickup and delivery progress appears in the donation timeline.",
+          role_permissions: "Restaurants list donations, approved NGOs accept them, volunteers handle assigned pickups, and administrators manage approvals and platform operations.",
+          volunteer_registration: "Choose Register and create a volunteer account. Add your availability zone so NGOs can coordinate nearby pickups.",
+          out_of_scope: "I’m trained for FoodBridge support topics. Ask me about registration, donations, claims, pickups, food safety, or account access."
+        },
+        hi: {
+          greeting: "नमस्ते! मैं FoodBridge, दान, खाता बनाने और खाद्य सुरक्षा के बारे में सहायता कर सकता हूँ। आप क्या जानना चाहते हैं?",
+          goodbye: "अलविदा! FoodBridge के साथ भोजन की बर्बादी कम करने में मदद करने के लिए धन्यवाद।", thanks: "आपका स्वागत है! FoodBridge से जुड़ी सहायता के लिए मैं यहाँ हूँ।",
+          about_foodbridge: "FoodBridge भोजन दान करने वालों को स्वीकृत NGOs और स्वयंसेवकों से जोड़ता है, ताकि अतिरिक्त भोजन वितरित हो और हर चरण दर्ज रहे।",
+          account_login: "अपने खाते में जाने के लिए Login पेज खोलें। प्रवेश न हो तो ईमेल और पासवर्ड जाँचें या सहायता से संपर्क करें।",
+          claim_donation: "स्वीकृत NGOs, NGO Portal में उपलब्ध दान देखकर उपयुक्त दान स्वीकार कर सकते हैं। दान स्वीकार करने से पहले NGO खाते को प्रशासक की मंज़ूरी चाहिए।",
+          contact_support: "अधिक सहायता के लिए FoodBridge ऐप में दिए गए संपर्क विवरण देखें। आप समस्या बताएँ, मैं मार्गदर्शन करने की कोशिश करूँगा।",
+          create_donation: "रेस्तराँ खाते से लॉगिन करके Restaurant Dashboard में दान जोड़ें या प्रबंधित करें। मात्रा, समाप्ति, पिकअप पता और समय दें।",
+          donation_expiry: "केवल वही भोजन सूचीबद्ध करें जिसे समाप्ति से पहले सुरक्षित रूप से लिया जा सके। सही तापमान रखें, सुरक्षित पैक करें और एलर्जी व संभाल संबंधी जानकारी लिखें।",
+          donor_registration: "Register चुनकर रेस्तराँ खाता बनाएँ। लॉगिन के बाद Restaurant Dashboard से अतिरिक्त भोजन सूचीबद्ध करें।",
+          food_safety: "भोजन सुरक्षित और खाने योग्य होना चाहिए। गर्म भोजन 60°C से ऊपर, ठंडा भोजन 4°C या उससे कम रखें; खाद्य-योग्य पैकेजिंग करें और एलर्जी की जानकारी दें।",
+          ngo_approval: "NGO पंजीकरण की समीक्षा FoodBridge प्रशासक करते हैं। लंबित स्थिति में आप सूची देख सकते हैं; दान स्वीकार करने के लिए मंज़ूरी आवश्यक है।",
+          pickup_assignment: "NGO के दान स्वीकार करने के बाद वह उपलब्ध स्वयंसेवक को नियुक्त कर सकता है। पिकअप और डिलीवरी की प्रगति दान की टाइमलाइन में दिखती है।",
+          role_permissions: "रेस्तराँ दान सूचीबद्ध करते हैं, स्वीकृत NGOs उन्हें स्वीकार करते हैं, स्वयंसेवक तय पिकअप करते हैं और प्रशासक मंज़ूरी व संचालन संभालते हैं।",
+          volunteer_registration: "Register चुनकर स्वयंसेवक खाता बनाएँ। आसपास के पिकअप समन्वय के लिए अपना उपलब्धता क्षेत्र जोड़ें।",
+          out_of_scope: "मुझे FoodBridge सहायता विषयों के लिए प्रशिक्षित किया गया है। पंजीकरण, दान, पिकअप, खाद्य सुरक्षा या खाते के बारे में पूछें।"
+        },
+        kn: {
+          greeting: "ನಮಸ್ಕಾರ! FoodBridge, ದೇಣಿಗೆ, ಖಾತೆ ನೋಂದಣಿ ಮತ್ತು ಆಹಾರ ಸುರಕ್ಷತೆಯ ಬಗ್ಗೆ ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ನಿಮಗೆ ಏನು ತಿಳಿಯಬೇಕು?",
+          goodbye: "ವಿದಾಯ! FoodBridge ಮೂಲಕ ಆಹಾರ ವ್ಯರ್ಥವನ್ನು ಕಡಿಮೆ ಮಾಡಲು ಸಹಕರಿಸಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದಗಳು.", thanks: "ಸ್ವಾಗತ! FoodBridge ಸಹಾಯಕ್ಕೆ ನಾನು ಇಲ್ಲಿದ್ದೇನೆ.",
+          about_foodbridge: "FoodBridge ಹೆಚ್ಚುವರಿ ಆಹಾರವನ್ನು ಹಂಚಲು ಆಹಾರ ದಾನಿಗಳನ್ನು ಅನುಮೋದಿತ NGOಗಳು ಮತ್ತು ಸ್ವಯಂಸೇವಕರೊಂದಿಗೆ ಸಂಪರ್ಕಿಸುತ್ತದೆ; ಪ್ರತಿ ಹಂತವನ್ನೂ ದಾಖಲಿಸುತ್ತದೆ.",
+          account_login: "ಖಾತೆಗೆ ಪ್ರವೇಶಿಸಲು Login ಪುಟವನ್ನು ಬಳಸಿ. ಪ್ರವೇಶವಾಗದಿದ್ದರೆ ಇಮೇಲ್ ಮತ್ತು ಪಾಸ್‌ವರ್ಡ್ ಪರಿಶೀಲಿಸಿ ಅಥವಾ ಬೆಂಬಲವನ್ನು ಸಂಪರ್ಕಿಸಿ.",
+          claim_donation: "ಅನುಮೋದಿತ NGOಗಳು NGO Portal ನಲ್ಲಿ ಲಭ್ಯವಿರುವ ದೇಣಿಗೆಗಳನ್ನು ನೋಡಿ ಸೂಕ್ತವಾದುದನ್ನು ಸ್ವೀಕರಿಸಬಹುದು. ಸ್ವೀಕರಿಸಲು ನಿರ್ವಾಹಕರ ಅನುಮೋದನೆ ಅಗತ್ಯ.",
+          contact_support: "ಹೆಚ್ಚಿನ ಸಹಾಯಕ್ಕೆ FoodBridge ಆ್ಯಪ್‌ನಲ್ಲಿರುವ ಸಂಪರ್ಕ ವಿವರಗಳನ್ನು ಬಳಸಿ. ಸಮಸ್ಯೆಯನ್ನು ತಿಳಿಸಿದರೆ ಮಾರ್ಗದರ್ಶನ ನೀಡಲು ಪ್ರಯತ್ನಿಸುತ್ತೇನೆ.",
+          create_donation: "ರೆಸ್ಟೋರೆಂಟ್ ಖಾತೆಯಿಂದ ಪ್ರವೇಶಿಸಿ Restaurant Dashboard ನಲ್ಲಿ ದೇಣಿಗೆ ಸೇರಿಸಿ ಅಥವಾ ನಿರ್ವಹಿಸಿ. ಪ್ರಮಾಣ, ಅವಧಿ, ಪಿಕಪ್ ವಿಳಾಸ ಮತ್ತು ಸಮಯ ನಮೂದಿಸಿ.",
+          donation_expiry: "ಅವಧಿ ಮುಗಿಯುವ ಮೊದಲು ಸುರಕ್ಷಿತವಾಗಿ ಸಂಗ್ರಹಿಸಬಹುದಾದ ಆಹಾರವನ್ನಷ್ಟೇ ಪಟ್ಟಿ ಮಾಡಿ. ಸರಿಯಾದ ತಾಪಮಾನ ಮತ್ತು ಪ್ಯಾಕಿಂಗ್ ಕಾಯ್ದುಕೊಂಡು ಅಲರ್ಜಿ ಹಾಗೂ ನಿರ್ವಹಣೆ ವಿವರಿಸಿ.",
+          donor_registration: "Register ಆಯ್ಕೆಮಾಡಿ ರೆಸ್ಟೋರೆಂಟ್ ಖಾತೆ ರಚಿಸಿ. ಪ್ರವೇಶಿಸಿದ ನಂತರ Restaurant Dashboard ನಲ್ಲಿ ಹೆಚ್ಚುವರಿ ಆಹಾರ ಪಟ್ಟಿ ಮಾಡಿ.",
+          food_safety: "ಆಹಾರ ಸುರಕ್ಷಿತವಾಗಿರಬೇಕು. ಬಿಸಿ ಆಹಾರವನ್ನು 60°C ಗಿಂತ ಹೆಚ್ಚು, ತಣ್ಣನೆಯ ಆಹಾರವನ್ನು 4°C ಅಥವಾ ಕಡಿಮೆ ಇಡಿ; ಆಹಾರ-ಸುರಕ್ಷಿತ ಪ್ಯಾಕಿಂಗ್ ಮಾಡಿ, ಅಲರ್ಜಿಗಳನ್ನು ಸೂಚಿಸಿ.",
+          ngo_approval: "NGO ನೋಂದಣಿಯನ್ನು FoodBridge ನಿರ್ವಾಹಕರು ಪರಿಶೀಲಿಸುತ್ತಾರೆ. ಬಾಕಿ ಸ್ಥಿತಿಯಲ್ಲಿ ಪಟ್ಟಿಗಳನ್ನು ನೋಡಬಹುದು; ದೇಣಿಗೆ ಸ್ವೀಕರಿಸಲು ಅನುಮೋದನೆ ಬೇಕು.",
+          pickup_assignment: "NGO ದೇಣಿಗೆಯನ್ನು ಸ್ವೀಕರಿಸಿದ ನಂತರ ಲಭ್ಯವಿರುವ ಸ್ವಯಂಸೇವಕರನ್ನು ನಿಯೋಜಿಸಬಹುದು. ಪಿಕಪ್ ಮತ್ತು ವಿತರಣೆಯ ಸ್ಥಿತಿ ದೇಣಿಗೆಯ ಕಾಲರೇಖೆಯಲ್ಲಿ ಕಾಣುತ್ತದೆ.",
+          role_permissions: "ರೆಸ್ಟೋರೆಂಟ್‌ಗಳು ದೇಣಿಗೆ ಪಟ್ಟಿ ಮಾಡುತ್ತವೆ, ಅನುಮೋದಿತ NGOಗಳು ಸ್ವೀಕರಿಸುತ್ತವೆ, ಸ್ವಯಂಸೇವಕರು ನಿಯೋಜಿತ ಪಿಕಪ್ ಮಾಡುತ್ತಾರೆ ಮತ್ತು ನಿರ್ವಾಹಕರು ಅನುಮೋದನೆ ಹಾಗೂ ಕಾರ್ಯಾಚರಣೆ ನೋಡಿಕೊಳ್ಳುತ್ತಾರೆ.",
+          volunteer_registration: "Register ಆಯ್ಕೆಮಾಡಿ ಸ್ವಯಂಸೇವಕ ಖಾತೆ ರಚಿಸಿ. ಹತ್ತಿರದ ಪಿಕಪ್‌ಗಳಿಗಾಗಿ ನಿಮ್ಮ ಲಭ್ಯತಾ ವಲಯ ಸೇರಿಸಿ.",
+          out_of_scope: "ನನಗೆ FoodBridge ಸಹಾಯ ವಿಷಯಗಳ ತರಬೇತಿ ಇದೆ. ನೋಂದಣಿ, ದೇಣಿಗೆ, ಪಿಕಪ್, ಆಹಾರ ಸುರಕ್ಷತೆ ಅಥವಾ ಖಾತೆ ಬಗ್ಗೆ ಕೇಳಿ."
+        }
+      };
+      const privateIntents = ['delivery_status', 'donation_history'];
+      let answer = text[language][prediction.intent] || text[language].out_of_scope;
+      let records: any[] | undefined;
+      if (!prediction.fallback && privateIntents.includes(prediction.intent)) {
+        if (!req.user) {
+          res.status(401).json({ error: language === 'hi' ? "अपनी डिलीवरी या दान का इतिहास देखने के लिए पहले लॉगिन करें।" : language === 'kn' ? "ನಿಮ್ಮ ವಿತರಣೆ ಅಥವಾ ದೇಣಿಗೆ ಇತಿಹಾಸ ನೋಡಲು ಮೊದಲು ಲಾಗಿನ್ ಮಾಡಿ." : "Please log in to view your delivery status or donation history." });
+          return;
+        }
+        let ownership = "restaurant_id = ?";
+        if (req.user.role === 'ngo') ownership = "accepted_by_ngo_id = ?";
+        else if (req.user.role === 'volunteer') ownership = "assigned_volunteer_id = ?";
+        else if (req.user.role === 'admin') ownership = "1=1";
+        records = querySql(`SELECT id, title, status, expiry, created_at FROM donations WHERE ${ownership} ORDER BY created_at DESC LIMIT 10`, req.user.role === 'admin' ? [] : [req.user.id]);
+        answer = language === 'hi' ? "यहाँ आपके खाते से जुड़े नवीनतम दान और उनकी स्थिति है:" : language === 'kn' ? "ನಿಮ್ಮ ಖಾತೆಗೆ ಸಂಬಂಧಿಸಿದ ಇತ್ತೀಚಿನ ದೇಣಿಗೆಗಳು ಮತ್ತು ಅವುಗಳ ಸ್ಥಿತಿ ಇಲ್ಲಿವೆ:" : "Here are the latest donations linked to your account and their status:";
+        if (records.length === 0) answer = language === 'hi' ? "आपके खाते से जुड़ा कोई दान रिकॉर्ड अभी नहीं मिला।" : language === 'kn' ? "ನಿಮ್ಮ ಖಾತೆಗೆ ಸಂಬಂಧಿಸಿದ ದೇಣಿಗೆ ದಾಖಲೆಗಳು ಇನ್ನೂ ಕಂಡುಬಂದಿಲ್ಲ." : "There are no donation records linked to your account yet.";
+      }
+      if (prediction.fallback) answer = text[language].out_of_scope;
+      res.json({ intent: prediction.intent, confidence: prediction.confidence, language, fallback: prediction.fallback, answer, ...(records ? { records } : {}) });
+    } catch (error) {
+      console.error("Chatbot request failed:", error);
+      res.status(503).json({ error: "Chat support is temporarily unavailable. Please try again." });
+    }
   });
 
   // Auth: Register

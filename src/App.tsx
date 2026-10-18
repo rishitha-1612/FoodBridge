@@ -3,6 +3,7 @@ import { User, UserRole } from './types';
 import { apiAuth, getStoredToken, setStoredToken } from './lib/api';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
+import { ChatbotWidget } from './components/ChatbotWidget';
 
 import { LandingPage } from './pages/LandingPage';
 import { AboutPage } from './pages/AboutPage';
@@ -180,6 +181,8 @@ export default function App() {
 
       {/* Footer */}
       <Footer onNavigate={handleNavigate} />
+
+      <ChatbotWidget />
 
     </div>
   );
