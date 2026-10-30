@@ -1,0 +1,12 @@
+{
+  "primary_dataset": "Custom FoodBridge multilingual examples",
+  "supplementary_dataset": "AmazonScience/MASSIVE",
+  "massive_languages": [
+    "en-US",
+    "hi-IN",
+    "kn-IN"
+  ],
+  "model": "google-bert/bert-base-multilingual-cased",
+  "task": "multilingual intent classification",
+  "note": "MASSIVE general intents are mapped to greeting/thanks/goodbye; other MASSIVE intents are mapped to out_of_scope. FoodBridge-specific intents come from custom examples."
+}

@@ -1,0 +1,42 @@
+{
+  "label2id": {
+    "about_foodbridge": 0,
+    "account_login": 1,
+    "claim_donation": 2,
+    "contact_support": 3,
+    "create_donation": 4,
+    "delivery_status": 5,
+    "donation_expiry": 6,
+    "donation_history": 7,
+    "donor_registration": 8,
+    "food_safety": 9,
+    "goodbye": 10,
+    "greeting": 11,
+    "ngo_approval": 12,
+    "out_of_scope": 13,
+    "pickup_assignment": 14,
+    "role_permissions": 15,
+    "thanks": 16,
+    "volunteer_registration": 17
+  },
+  "id2label": {
+    "0": "about_foodbridge",
+    "1": "account_login",
+    "2": "claim_donation",
+    "3": "contact_support",
+    "4": "create_donation",
+    "5": "delivery_status",
+    "6": "donation_expiry",
+    "7": "donation_history",
+    "8": "donor_registration",
+    "9": "food_safety",
+    "10": "goodbye",
+    "11": "greeting",
+    "12": "ngo_approval",
+    "13": "out_of_scope",
+    "14": "pickup_assignment",
+    "15": "role_permissions",
+    "16": "thanks",
+    "17": "volunteer_registration"
+  }
+}
